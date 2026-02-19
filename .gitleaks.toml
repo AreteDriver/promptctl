@@ -1,0 +1,6 @@
+[allowlist]
+  description = "promptctl allowlist"
+  regexTarget = "match"
+  regexes = [
+    '''promptctl-v1''',
+  ]
