@@ -7,7 +7,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from promptctl.client import get_client, send_message, send_message_streaming
+from promptctl.client import (
+    get_client,
+    send_message,
+    send_message_streaming,
+    send_message_with_tools,
+)
 from promptctl.exceptions import ClientError
 
 
@@ -156,6 +161,27 @@ class TestSendMessage:
 
         assert result.response == "Hello world!"
 
+    def test_system_as_list_for_cache_control(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        mock_resp = _mock_response()
+        system_blocks = [
+            {"type": "text", "text": "Document content", "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": "Answer questions."},
+        ]
+
+        with patch("promptctl.client.anthropic.Anthropic") as mock_cls:
+            mock_client = mock_cls.return_value
+            mock_client.messages.create.return_value = mock_resp
+
+            send_message(
+                model="claude-sonnet-4-20250514",
+                system=system_blocks,
+                messages=[{"role": "user", "content": "What is this?"}],
+            )
+
+        call_kwargs = mock_client.messages.create.call_args[1]
+        assert call_kwargs["system"] == system_blocks
+
     def test_extra_kwargs_passed(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
         mock_resp = _mock_response()
@@ -171,6 +197,106 @@ class TestSendMessage:
 
         call_kwargs = mock_client.messages.create.call_args[1]
         assert call_kwargs["top_p"] == 0.9
+
+
+class TestSendMessageWithTools:
+    def test_basic_with_tool_call(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        blocks = [
+            SimpleNamespace(type="text", text="Let me validate that."),
+            SimpleNamespace(
+                type="tool_use",
+                id="tu_123",
+                name="validate_yaml",
+                input={"yaml_content": "name: test"},
+            ),
+        ]
+        usage = SimpleNamespace(input_tokens=20, output_tokens=15)
+        mock_resp = SimpleNamespace(content=blocks, usage=usage)
+
+        with patch("promptctl.client.anthropic.Anthropic") as mock_cls:
+            mock_client = mock_cls.return_value
+            mock_client.messages.create.return_value = mock_resp
+
+            result, tool_calls = send_message_with_tools(
+                model="claude-sonnet-4-20250514",
+                messages=[{"role": "user", "content": "Check this"}],
+                tools=[{"name": "validate_yaml", "description": "Validate YAML"}],
+            )
+
+        assert result.response == "Let me validate that."
+        assert len(tool_calls) == 1
+        assert tool_calls[0]["name"] == "validate_yaml"
+        assert tool_calls[0]["id"] == "tu_123"
+        assert tool_calls[0]["input"] == {"yaml_content": "name: test"}
+
+    def test_no_tool_calls(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        mock_resp = _mock_response("Just text")
+
+        with patch("promptctl.client.anthropic.Anthropic") as mock_cls:
+            mock_client = mock_cls.return_value
+            mock_client.messages.create.return_value = mock_resp
+
+            result, tool_calls = send_message_with_tools(
+                model="claude-sonnet-4-20250514",
+                messages=[{"role": "user", "content": "Hi"}],
+            )
+
+        assert result.response == "Just text"
+        assert tool_calls == []
+
+    def test_tools_passed_to_api(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        mock_resp = _mock_response()
+
+        tools = [{"name": "validate_yaml", "description": "Check"}]
+
+        with patch("promptctl.client.anthropic.Anthropic") as mock_cls:
+            mock_client = mock_cls.return_value
+            mock_client.messages.create.return_value = mock_resp
+
+            send_message_with_tools(
+                model="claude-sonnet-4-20250514",
+                tools=tools,
+            )
+
+        call_kwargs = mock_client.messages.create.call_args[1]
+        assert call_kwargs["tools"] == tools
+
+    def test_api_error_raises(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        import anthropic
+
+        with patch("promptctl.client.anthropic.Anthropic") as mock_cls:
+            mock_client = mock_cls.return_value
+            mock_client.messages.create.side_effect = anthropic.APIError(
+                message="error",
+                request=MagicMock(),
+                body=None,
+            )
+
+            with pytest.raises(ClientError, match="Anthropic API error"):
+                send_message_with_tools(
+                    model="claude-sonnet-4-20250514",
+                    messages=[{"role": "user", "content": "Hi"}],
+                )
+
+    def test_system_prompt_passed(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        mock_resp = _mock_response()
+
+        with patch("promptctl.client.anthropic.Anthropic") as mock_cls:
+            mock_client = mock_cls.return_value
+            mock_client.messages.create.return_value = mock_resp
+
+            send_message_with_tools(
+                model="claude-sonnet-4-20250514",
+                system="Be a YAML expert.",
+            )
+
+        call_kwargs = mock_client.messages.create.call_args[1]
+        assert call_kwargs["system"] == "Be a YAML expert."
 
 
 class TestSendMessageStreaming:

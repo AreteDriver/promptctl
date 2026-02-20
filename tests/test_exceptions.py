@@ -5,7 +5,9 @@ from __future__ import annotations
 from promptctl.exceptions import (
     ClientError,
     ConfigError,
+    DocError,
     LicenseError,
+    LintError,
     PromptctlError,
     PromptError,
     ReviewError,
@@ -28,11 +30,25 @@ class TestExceptionHierarchy:
     def test_review_error_inherits(self):
         assert issubclass(ReviewError, PromptctlError)
 
+    def test_doc_error_inherits(self):
+        assert issubclass(DocError, PromptctlError)
+
+    def test_lint_error_inherits(self):
+        assert issubclass(LintError, PromptctlError)
+
     def test_license_error_inherits(self):
         assert issubclass(LicenseError, PromptctlError)
 
     def test_all_catchable_by_base(self):
-        for cls in (ConfigError, ClientError, PromptError, ReviewError, LicenseError):
+        for cls in (
+            ConfigError,
+            ClientError,
+            PromptError,
+            ReviewError,
+            DocError,
+            LintError,
+            LicenseError,
+        ):
             try:
                 raise cls("test")
             except PromptctlError:
@@ -43,6 +59,14 @@ class TestExceptionHierarchy:
         assert str(e) == "bad config"
 
     def test_all_constructible_with_message(self):
-        for cls in (ConfigError, ClientError, PromptError, ReviewError, LicenseError):
+        for cls in (
+            ConfigError,
+            ClientError,
+            PromptError,
+            ReviewError,
+            DocError,
+            LintError,
+            LicenseError,
+        ):
             e = cls(f"{cls.__name__} test")
             assert cls.__name__ in str(e)

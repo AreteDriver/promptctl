@@ -19,12 +19,12 @@ class TestVersion:
         result = runner.invoke(app, ["--version"])
         assert result.exit_code == 0
         assert "promptctl" in result.output
-        assert "0.1.0" in result.output
+        assert "0.2.0" in result.output
 
     def test_short_version_flag(self):
         result = runner.invoke(app, ["-v"])
         assert result.exit_code == 0
-        assert "0.1.0" in result.output
+        assert "0.2.0" in result.output
 
 
 class TestStatus:
@@ -241,3 +241,171 @@ class TestReviewFileCommand:
             result = runner.invoke(app, ["review", "file", str(code_file), "--json"])
 
         assert result.exit_code == 0
+
+
+class TestDocAnalyzeCommand:
+    def test_analyze_basic(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        f = tmp_path / "doc.txt"
+        f.write_text("A test document with content.")
+
+        resp_data = json.dumps(
+            {
+                "summary": "A test doc",
+                "key_points": ["testing"],
+                "entities": [],
+                "themes": [],
+            }
+        )
+        mock_resp = _mock_response(resp_data)
+
+        with patch("promptctl.client.anthropic.Anthropic") as mock_cls:
+            mock_client = mock_cls.return_value
+            mock_client.messages.create.return_value = mock_resp
+            result = runner.invoke(app, ["doc", "analyze", str(f)])
+
+        assert result.exit_code == 0
+        assert "A test doc" in result.output
+
+    def test_analyze_json_output(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        f = tmp_path / "doc.txt"
+        f.write_text("Content here.")
+
+        resp_data = json.dumps({"summary": "OK", "key_points": []})
+        mock_resp = _mock_response(resp_data)
+
+        with patch("promptctl.client.anthropic.Anthropic") as mock_cls:
+            mock_client = mock_cls.return_value
+            mock_client.messages.create.return_value = mock_resp
+            result = runner.invoke(app, ["doc", "analyze", str(f), "--json"])
+
+        assert result.exit_code == 0
+        assert '"summary"' in result.output
+
+    def test_analyze_file_not_found(self):
+        result = runner.invoke(app, ["doc", "analyze", "/nonexistent.txt"])
+        assert result.exit_code == 1
+        assert "Error" in result.output
+
+
+class TestDocAskCommand:
+    def test_ask_basic(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        f = tmp_path / "doc.txt"
+        f.write_text("The sky is blue.")
+
+        resp_data = json.dumps(
+            {
+                "answer": "Blue",
+                "confidence": "high",
+                "source_quotes": ["The sky is blue."],
+            }
+        )
+        mock_resp = _mock_response(resp_data)
+
+        with patch("promptctl.client.anthropic.Anthropic") as mock_cls:
+            mock_client = mock_cls.return_value
+            mock_client.messages.create.return_value = mock_resp
+            result = runner.invoke(app, ["doc", "ask", str(f), "What color is the sky?"])
+
+        assert result.exit_code == 0
+        assert "Blue" in result.output
+
+    def test_ask_file_not_found(self):
+        result = runner.invoke(app, ["doc", "ask", "/nonexistent.txt", "question"])
+        assert result.exit_code == 1
+
+
+class TestDocSummarizeCommand:
+    def test_summarize_basic(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        f = tmp_path / "doc.txt"
+        f.write_text("Short document here.")
+
+        resp_data = json.dumps(
+            {
+                "executive_summary": "A brief doc.",
+                "sections": ["Only one"],
+            }
+        )
+        mock_resp = _mock_response(resp_data)
+
+        with patch("promptctl.client.anthropic.Anthropic") as mock_cls:
+            mock_client = mock_cls.return_value
+            mock_client.messages.create.return_value = mock_resp
+            result = runner.invoke(app, ["doc", "summarize", str(f)])
+
+        assert result.exit_code == 0
+        assert "A brief doc." in result.output
+
+    def test_summarize_json_output(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        f = tmp_path / "doc.txt"
+        f.write_text("Content.")
+
+        resp_data = json.dumps(
+            {
+                "executive_summary": "OK",
+                "sections": [],
+            }
+        )
+        mock_resp = _mock_response(resp_data)
+
+        with patch("promptctl.client.anthropic.Anthropic") as mock_cls:
+            mock_client = mock_cls.return_value
+            mock_client.messages.create.return_value = mock_resp
+            result = runner.invoke(app, ["doc", "summarize", str(f), "--json"])
+
+        assert result.exit_code == 0
+        assert '"executive_summary"' in result.output
+
+
+class TestLintCheckCommand:
+    def test_check_clean(self, tmp_path):
+        f = tmp_path / "clean.yaml"
+        f.write_text("name: test\nversion: '1'\nprompt: hello")
+        result = runner.invoke(app, ["lint", "check", str(f)])
+        assert result.exit_code == 0
+        assert "No issues found" in result.output
+
+    def test_check_with_violations(self, tmp_path):
+        f = tmp_path / "bad.yaml"
+        f.write_text("prompt: hello")  # Missing name, version
+        result = runner.invoke(app, ["lint", "check", str(f)])
+        assert result.exit_code == 0
+        assert "L002" in result.output
+
+    def test_check_json_output(self, tmp_path):
+        f = tmp_path / "clean.yaml"
+        f.write_text("name: test\nversion: '1'")
+        result = runner.invoke(app, ["lint", "check", str(f), "--json"])
+        assert result.exit_code == 0
+        assert '"violations"' in result.output
+
+    def test_check_file_not_found(self):
+        result = runner.invoke(app, ["lint", "check", "/nonexistent.yaml"])
+        assert result.exit_code == 1
+        assert "Error" in result.output
+
+
+class TestLintFixCommand:
+    def test_fix_requires_pro(self, tmp_path):
+        f = tmp_path / "bad.yaml"
+        f.write_text("prompt: hello")
+        result = runner.invoke(app, ["lint", "fix", str(f)])
+        assert result.exit_code == 1
+        assert "Pro license" in result.output
+
+
+class TestLintRulesCommand:
+    def test_rules_list(self):
+        result = runner.invoke(app, ["lint", "rules"])
+        assert result.exit_code == 0
+        assert "L001" in result.output
+        assert "L008" in result.output
+
+    def test_rules_json(self):
+        result = runner.invoke(app, ["lint", "rules", "--json"])
+        assert result.exit_code == 0
+        assert '"L001"' in result.output

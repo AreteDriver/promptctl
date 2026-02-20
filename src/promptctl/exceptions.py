@@ -21,5 +21,13 @@ class ReviewError(PromptctlError):
     """Code review operation failed."""
 
 
+class DocError(PromptctlError):
+    """Document analysis operation failed."""
+
+
+class LintError(PromptctlError):
+    """Lint check or fix operation failed."""
+
+
 class LicenseError(PromptctlError):
     """License validation failed."""

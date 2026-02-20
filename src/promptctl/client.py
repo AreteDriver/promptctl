@@ -30,7 +30,7 @@ def get_client() -> anthropic.Anthropic:
 
 def send_message(
     model: str,
-    system: str = "",
+    system: str | list[dict[str, Any]] = "",
     messages: list[dict[str, str]] | None = None,
     max_tokens: int = 4096,
     temperature: float = 1.0,
@@ -76,6 +76,67 @@ def send_message(
         cost_usd=cost,
         latency_ms=elapsed_ms,
     )
+
+
+def send_message_with_tools(
+    model: str,
+    system: str = "",
+    messages: list[dict[str, Any]] | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    max_tokens: int = 4096,
+    temperature: float = 1.0,
+    **kwargs: Any,
+) -> tuple[PromptResult, list[dict[str, Any]]]:
+    """Send a message with tools and return (result, tool_calls).
+
+    Returns the text response as PromptResult plus a list of tool_use blocks
+    extracted from the response.
+    """
+    client = get_client()
+    if messages is None:
+        messages = []
+
+    api_kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+    if system:
+        api_kwargs["system"] = system
+    if tools:
+        api_kwargs["tools"] = tools
+    api_kwargs.update(kwargs)
+
+    start = time.monotonic()
+    try:
+        response = client.messages.create(**api_kwargs)
+    except anthropic.APIError as e:
+        raise ClientError(f"Anthropic API error: {e}") from e
+
+    elapsed_ms = (time.monotonic() - start) * 1000
+
+    text = ""
+    tool_calls: list[dict[str, Any]] = []
+    for block in response.content:
+        if block.type == "text":
+            text += block.text
+        elif block.type == "tool_use":
+            tool_calls.append({"id": block.id, "name": block.name, "input": block.input})
+
+    input_tokens = response.usage.input_tokens
+    output_tokens = response.usage.output_tokens
+    cost = calculate_cost(model, input_tokens, output_tokens)
+
+    result = PromptResult(
+        model=model,
+        response=text,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cost_usd=cost,
+        latency_ms=elapsed_ms,
+    )
+    return result, tool_calls
 
 
 def send_message_streaming(
